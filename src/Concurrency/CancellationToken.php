@@ -1,6 +1,6 @@
 <?php
 
-namespace JobMetric\Flyron\Core;
+namespace JobMetric\Flyron\Concurrency;
 
 /**
  * Class CancellationToken
