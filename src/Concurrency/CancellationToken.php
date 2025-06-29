@@ -25,8 +25,8 @@ class CancellationToken
     /**
      * Request cancellation.
      *
-     * Marks the token as cancelled, signaling any observers or tasks
-     * that they should attempt to stop execution as soon as possible.
+     * Marks the token as cancelled, signaling any observers or tasks that
+     * they should attempt to stop execution as soon as possible.
      *
      * @return void
      */
