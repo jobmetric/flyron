@@ -24,7 +24,6 @@
     ],
     "require": {
         "php": ">=8.1",
-        "ext-posix": "*",
         "laravel/framework": ">=9.19",
         "jobmetric/laravel-package-core": "^1.18.6"
     },
