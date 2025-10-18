@@ -42,8 +42,9 @@ class FlyronProcessList extends Command
     {
         $path = storage_path('flyron/pids');
 
-        if (!is_dir($path)) {
+        if (! is_dir($path)) {
             $this->warn('No PID directory found.');
+
             return self::SUCCESS;
         }
 
@@ -51,6 +52,7 @@ class FlyronProcessList extends Command
 
         if (empty($files)) {
             $this->info('No running Flyron processes.');
+
             return self::SUCCESS;
         }
 
@@ -74,6 +76,7 @@ class FlyronProcessList extends Command
      * Determine whether a process with the given PID is running.
      *
      * @param int $pid
+     *
      * @return bool
      */
     protected function isRunning(int $pid): bool
@@ -88,10 +91,11 @@ class FlyronProcessList extends Command
             // Tasklist command for Windows
             exec("tasklist /FI \"PID eq {$pid}\" 2>NUL", $output);
             foreach ($output as $line) {
-                if (preg_match('/\b' . preg_quote((string)$pid, '/') . '\b/', $line)) {
+                if (preg_match('/\b'.preg_quote((string)$pid, '/').'\b/', $line)) {
                     return true;
                 }
             }
+
             return false;
         }
 
@@ -102,6 +106,7 @@ class FlyronProcessList extends Command
 
         // Fallback
         exec("ps -p {$pid}", $output);
+
         return isset($output[1]);
     }
 }

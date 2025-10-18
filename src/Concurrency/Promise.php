@@ -89,7 +89,7 @@ class Promise
      *
      * Runs all chained then callbacks in order.
      *
-     * @return T The fulfilled value.
+     * @return mixed The fulfilled value.
      * @throws Throwable If the promise is rejected or cancelled.
      */
     public function run(): mixed
@@ -213,7 +213,7 @@ class Promise
     /**
      * Get the result of the promise or throw if rejected or cancelled.
      *
-     * @return T The resolved value.
+     * @return mixed The resolved value.
      * @throws Throwable If promise was rejected or cancelled.
      */
     protected function getResultOrThrow(): mixed
@@ -294,11 +294,9 @@ class Promise
     {
         self::validatePromises($promises);
 
-        $results = [];
-        foreach ($promises as $key => $promise) {
-            $results[$key] = $promise->run();
-        }
-        return $results;
+        return array_map(function ($promise) {
+            return $promise->run();
+        }, $promises);
     }
 
     /**
@@ -307,9 +305,8 @@ class Promise
      * @template T
      * @param self<T>[] $promises
      *
-     * @return T
+     * @return mixed
      * @throws Throwable If the resolved promise rejects or errors.
-     * @throws InvalidArgumentException If any element is not a Promise instance.
      */
     public static function race(array $promises): mixed
     {
@@ -317,7 +314,7 @@ class Promise
 
         while (true) {
             foreach ($promises as $promise) {
-                if (!$promise->isPending()) {
+                if (! $promise->isPending()) {
                     return $promise->getResultOrThrow();
                 }
             }
@@ -335,7 +332,7 @@ class Promise
      */
     public static function resolve(mixed $value): self
     {
-        return new self(new Fiber(fn() => $value));
+        return new self(new Fiber(fn () => $value));
     }
 
     /**
@@ -347,7 +344,7 @@ class Promise
      */
     public static function reject(Throwable $e): self
     {
-        return new self(new Fiber(fn() => throw $e));
+        return new self(new Fiber(fn () => throw $e));
     }
 
     /**
@@ -361,7 +358,7 @@ class Promise
     public static function validatePromises(array $promises): void
     {
         foreach ($promises as $promise) {
-            if (!$promise instanceof Promise) {
+            if (! $promise instanceof Promise) {
                 throw new InvalidArgumentException("All elements must be Promise instances");
             }
         }

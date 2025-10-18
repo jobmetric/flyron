@@ -42,24 +42,26 @@ class FlyronOptimize extends Command
     {
         $pidPath = storage_path('flyron/pids');
 
-        if (!is_dir($pidPath)) {
+        if (! is_dir($pidPath)) {
             $this->info('✅ No PID directory found. Nothing to optimize.');
-            return 0;
+
+            return self::SUCCESS;
         }
 
         $pidFiles = glob("{$pidPath}/*.pid");
 
         if (empty($pidFiles)) {
             $this->info('✅ No PID files to clean.');
-            return 0;
+
+            return self::SUCCESS;
         }
 
         $cleaned = 0;
 
         foreach ($pidFiles as $file) {
-            $pid = (int) basename($file, '.pid');
+            $pid = (int)basename($file, '.pid');
 
-            if (!$this->isRunning($pid)) {
+            if (! $this->isRunning($pid)) {
                 if (@unlink($file)) {
                     $this->line("🧹 Removed stale PID file: {$pid}.pid");
                     $cleaned++;
@@ -73,7 +75,7 @@ class FlyronOptimize extends Command
             ? $this->info("✅ Cleanup complete. {$cleaned} dead process file(s) removed.")
             : $this->info("🎉 All PID files belong to active processes.");
 
-        return 0;
+        return self::SUCCESS;
     }
 
     /**

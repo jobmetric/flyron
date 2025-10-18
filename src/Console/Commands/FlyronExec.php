@@ -43,7 +43,7 @@ class FlyronExec extends Command
 
             if (is_callable($closure)) {
                 call_user_func($closure);
-                $this->message('Closure executed successfully.', 'info');
+                $this->message('Closure executed successfully.');
 
                 return self::SUCCESS;
             } else {
@@ -52,7 +52,7 @@ class FlyronExec extends Command
                 return self::FAILURE;
             }
         } catch (Throwable $e) {
-            $this->message('Failed to execute closure: ' . $e->getMessage(), 'error');
+            $this->message('Failed to execute closure: '.$e->getMessage(), 'error');
 
             return self::FAILURE;
         }

@@ -43,19 +43,21 @@ class FlyronProcessKill extends Command
      */
     public function handle(): int
     {
-        $pid = (int) $this->argument('pid');
+        $pid = (int)$this->argument('pid');
 
         if ($pid <= 0) {
             $this->error("Invalid PID provided.");
-            return 1;
+
+            return self::FAILURE;
         }
 
         $pidFile = storage_path("flyron/pids/{$pid}.pid");
 
         // Check that the process is managed by Flyron
-        if (!file_exists($pidFile)) {
+        if (! file_exists($pidFile)) {
             $this->error("PID {$pid} is not managed by Flyron or has already been removed.");
-            return 1;
+
+            return self::FAILURE;
         }
 
         // Determine platform

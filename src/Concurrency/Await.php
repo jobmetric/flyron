@@ -23,7 +23,7 @@ class Await
      * @template T
      * @param Promise<T> $promise The promise to wait on.
      *
-     * @return T The resolved value of the promise.
+     * @return mixed The resolved value of the promise.
      * @throws Throwable Throws if the promise rejects or errors.
      */
     public static function one(Promise $promise): mixed
@@ -52,9 +52,8 @@ class Await
      * @template T
      * @param Promise<T>[] $promises Array of Promise instances to race.
      *
-     * @return T The resolved value of the first settled promise.
+     * @return mixed The resolved value of the first settled promise.
      * @throws Throwable Throws if the first settled promise rejects or errors.
-     * @throws InvalidArgumentException If any element is not a Promise instance.
      */
     public static function race(array $promises): mixed
     {
@@ -69,7 +68,7 @@ class Await
      * @template T
      * @param Promise<T>[] $promises Array of Promise instances.
      *
-     * @return T The resolved value of the first fulfilled promise.
+     * @return mixed The resolved value of the first fulfilled promise.
      * @throws Throwable Throws if all promises reject.
      * @throws InvalidArgumentException If any element is not a Promise instance.
      */
@@ -81,7 +80,7 @@ class Await
 
         while (true) {
             foreach ($promises as $promise) {
-                if (!$promise->isPending()) {
+                if (! $promise->isPending()) {
                     try {
                         return $promise->run();
                     } catch (Throwable $e) {
@@ -102,6 +101,7 @@ class Await
      * Delay execution for a specified number of milliseconds.
      *
      * @param int $ms Delay duration in milliseconds.
+     *
      * @return void
      */
     public static function delay(int $ms): void
@@ -115,9 +115,9 @@ class Await
      * Checks the callable repeatedly every $intervalMs milliseconds until
      * the condition returns a truthy value or the timeout is reached.
      *
-     * @param callable(): mixed $condition A callable returning a truthy value to stop waiting.
-     * @param int $timeoutMs Maximum wait time in milliseconds before throwing.
-     * @param int $intervalMs Polling interval in milliseconds.
+     * @param callable(): mixed $condition  A callable returning a truthy value to stop waiting.
+     * @param int               $timeoutMs  Maximum wait time in milliseconds before throwing.
+     * @param int               $intervalMs Polling interval in milliseconds.
      *
      * @return mixed The truthy value returned by the condition.
      * @throws RuntimeException If the timeout is reached before condition returns truthy.

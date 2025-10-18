@@ -13,7 +13,8 @@ class AsyncProcess
      * Dispatch a callable to be run in a separate process.
      *
      * @param callable $callback
-     * @param array $args
+     * @param array    $args
+     *
      * @return int|null
      * @throws PhpVersionNotSupportedException
      */
@@ -25,7 +26,7 @@ class AsyncProcess
         $phpPath = config('flyron.php_path', PHP_BINARY);
         $artisan = config('flyron.artisan_path', base_path('artisan'));
 
-        if (!file_exists($artisan)) {
+        if (! file_exists($artisan)) {
             throw new RuntimeException("Artisan file not found at: {$artisan}");
         }
 
