@@ -57,7 +57,8 @@ class Async
                     logger()->error('Async error', ['exception' => $e]);
                 }
 
-                Fiber::suspend($e);
+                // Propagate to Promise via Fiber exception
+                throw $e;
             }
         });
 
@@ -83,5 +84,36 @@ class Async
         if ($token?->isCancelled()) {
             throw new RuntimeException("Operation cancelled {$when} execution.");
         }
+    }
+
+    /**
+     * Cooperative cancellation checkpoint for use inside long loops.
+     *
+     * Can be called manually from user code to enforce cooperative cancellation
+     * semantics at desired checkpoints.
+     *
+     * @param CancellationToken|null $token
+     * @param string                 $message Optional message.
+     *
+     * @return void
+     * @throws RuntimeException If cancelled.
+     */
+    public static function checkpoint(?CancellationToken $token, string $message = 'Operation cancelled.'): void
+    {
+        if ($token?->isCancelled()) {
+            throw new RuntimeException($message);
+        }
+    }
+
+    /**
+     * Convenience delay helper for cooperative waiting inside async flows.
+     *
+     * @param int $ms Milliseconds to sleep.
+     *
+     * @return void
+     */
+    public static function delay(int $ms): void
+    {
+        usleep($ms * 1000);
     }
 }
