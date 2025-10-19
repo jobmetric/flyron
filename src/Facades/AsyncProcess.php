@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Facade;
 /**
  * @mixin \JobMetric\Flyron\AsyncProcess
  *
- * @method static int|null run(callable $callback, array $args = [])
+ * @method static int|null run(callable $callback, array $args = [], array $options = [])
  */
 class AsyncProcess extends Facade
 {

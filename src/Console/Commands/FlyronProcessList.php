@@ -63,7 +63,9 @@ class FlyronProcessList extends Command
         foreach ($files as $file) {
             $pid = basename($file, '.pid');
             $status = $this->isRunning((int)$pid) ? '✅ Alive' : '❌ Dead';
-            $this->line("🧩 PID: {$pid} | Status: {$status}");
+            $label = $this->readLabel($file);
+            $labelOut = $label ? " | Label: {$label}" : '';
+            $this->line("🧩 PID: {$pid} | Status: {$status}{$labelOut}");
         }
 
         $this->line(str_repeat('-', 40));
@@ -108,5 +110,26 @@ class FlyronProcessList extends Command
         exec("ps -p {$pid}", $output);
 
         return isset($output[1]);
+    }
+
+    /**
+     * Read optional label from PID metadata (JSON content).
+     *
+     * @param string $file
+     *
+     * @return string|null
+     */
+    protected function readLabel(string $file): ?string
+    {
+        $content = @file_get_contents($file);
+        if ($content === false) {
+            return null;
+        }
+        $data = json_decode($content, true);
+        if (is_array($data) && isset($data['label']) && $data['label'] !== null && $data['label'] !== '') {
+            return (string)$data['label'];
+        }
+
+        return null;
     }
 }

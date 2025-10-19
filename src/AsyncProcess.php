@@ -10,37 +10,99 @@ use Symfony\Component\Process\Process;
 class AsyncProcess
 {
     /**
-     * Dispatch a callable to be run in a separate process.
+     * Dispatch a callable to be run in a separate OS process.
      *
-     * @param callable $callback
-     * @param array    $args
+     * Security and robustness:
+     * - Uses a file-based payload with HMAC (APP_KEY) instead of passing serialized content as CLI argument.
+     * - Ensures PID/payload directories exist.
+     * - Spawns process via Symfony Process array API to avoid shell-quoting issues.
      *
-     * @return int|null
+     * Options:
+     * - cwd:     string|null  Working directory for the process
+     * - env:     array|null   Extra environment variables for the process
+     * - timeout: float|null   Process timeout in seconds (Symfony Process)
+     * - label:   string|null  Optional label saved in PID metadata
+     *
+     * @template T
+     * @param callable(mixed ...): T                                                                $callback The callback to execute in a separate process.
+     * @param array                                                                                 $args     Optional arguments passed to the callback.
+     * @param array{cwd?: string|null, env?: array|null, timeout?: float|null, label?: string|null} $options
+     *
+     * @return int|null PID of the spawned process or null if unavailable.
      * @throws PhpVersionNotSupportedException
      */
-    public function run(callable $callback, array $args = []): ?int
+    public function run(callable $callback, array $args = [], array $options = []): ?int
     {
-        $serializable = serialize(new SerializableClosure(fn () => $callback(...$args)));
-        $escaped = escapeshellarg($serializable);
+        $phpPath = (string)config('flyron.php_path', PHP_BINARY);
+        $artisan = (string)config('flyron.artisan_path', base_path('artisan'));
 
-        $phpPath = config('flyron.php_path', PHP_BINARY);
-        $artisan = config('flyron.artisan_path', base_path('artisan'));
+        if (! is_string($phpPath) || $phpPath === '' || ! is_file($phpPath)) {
+            throw new RuntimeException("Invalid PHP binary path: {$phpPath}");
+        }
 
         if (! file_exists($artisan)) {
             throw new RuntimeException("Artisan file not found at: {$artisan}");
         }
 
-        $command = "{$phpPath} {$artisan} flyron:exec {$escaped}";
+        $this->ensureDirectory(storage_path('flyron/pids'));
+        $this->ensureDirectory(storage_path('flyron/payloads'));
 
-        $process = Process::fromShellCommandline($command);
+        // Serialize the closure using laravel/serializable-closure
+        $serialized = serialize(new SerializableClosure(fn () => $callback(...$args)));
+
+        // Build signed payload
+        $secret = $this->getAppKey();
+        $payload = ['c' => base64_encode($serialized), 'h' => hash_hmac('sha256', $serialized, $secret), 't' => time(), 'label' => $options['label'] ?? null,];
+
+        $payloadId = uniqid('flyron_', true);
+        $payloadPath = storage_path("flyron/payloads/{$payloadId}.json");
+        file_put_contents($payloadPath, json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+
+        // Build process command using array form
+        $process = new Process([$phpPath, $artisan, 'flyron:exec', $payloadPath,], $options['cwd'] ?? null, $options['env'] ?? null, null, $options['timeout'] ?? null);
+
+        $process->disableOutput();
         $process->start();
 
         $pid = $process->getPid();
 
         if ($pid) {
-            file_put_contents(storage_path("flyron/pids/{$pid}.pid"), $command);
+            $meta = ['pid' => $pid, 'cmd' => [$phpPath, $artisan, 'flyron:exec', $payloadPath], 'payload' => $payloadPath, 'label' => $options['label'] ?? null, 'created_at' => date('c'),];
+            file_put_contents(storage_path("flyron/pids/{$pid}.pid"), json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         }
 
         return $pid;
+    }
+
+    /**
+     * Ensure directory exists.
+     *
+     * @param string $dir
+     *
+     * @return void
+     */
+    protected function ensureDirectory(string $dir): void
+    {
+        if (! is_dir($dir)) {
+            @mkdir($dir, 0777, true);
+        }
+    }
+
+    /**
+     * Get the APP_KEY as binary secret for HMAC.
+     *
+     * @return string
+     */
+    protected function getAppKey(): string
+    {
+        $key = (string)config('app.key', '');
+        if (str_starts_with($key, 'base64:')) {
+            $decoded = base64_decode(substr($key, 7), true);
+            if ($decoded !== false) {
+                return $decoded;
+            }
+        }
+
+        return $key;
     }
 }

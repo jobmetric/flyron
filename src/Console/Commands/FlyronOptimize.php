@@ -71,9 +71,7 @@ class FlyronOptimize extends Command
             }
         }
 
-        $cleaned
-            ? $this->info("✅ Cleanup complete. {$cleaned} dead process file(s) removed.")
-            : $this->info("🎉 All PID files belong to active processes.");
+        $cleaned ? $this->info("✅ Cleanup complete. {$cleaned} dead process file(s) removed.") : $this->info("🎉 All PID files belong to active processes.");
 
         return self::SUCCESS;
     }
@@ -93,6 +91,7 @@ class FlyronOptimize extends Command
 
         if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
             exec("tasklist /FI \"PID eq {$pid}\" 2>NUL", $output);
+
             return isset($output[1]) && str_contains($output[1], (string)$pid);
         }
 

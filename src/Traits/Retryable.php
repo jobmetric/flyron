@@ -32,11 +32,13 @@ trait Retryable
      * Set the maximum number of retry attempts.
      *
      * @param int $times Number of times to retry on failure.
+     *
      * @return static
      */
     public function retry(int $times): static
     {
         $this->maxRetries = max(0, $times);
+
         return $this;
     }
 

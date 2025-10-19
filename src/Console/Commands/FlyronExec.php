@@ -16,45 +16,103 @@ class FlyronExec extends Command
      *
      * @var string
      */
-    protected $signature = 'flyron:exec {closure}';
+    protected $signature = 'flyron:exec {payload_path}';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = 'Execute a serialized closure asynchronously';
+    protected $description = 'Execute a signed payload that contains a serialized closure';
 
     /**
      * Execute the console command.
+     *
+     * Reads the payload file, verifies its HMAC using APP_KEY, then unserializes
+     * the contained SerializableClosure and executes it. Cleans up payload and PID files.
      *
      * @return int
      */
     public function handle(): int
     {
-        $serialized = $this->argument('closure');
+        $payloadPath = (string)$this->argument('payload_path');
 
         try {
-            $closure = unserialize($serialized);
+            if (! is_file($payloadPath)) {
+                $this->message('Payload file not found: '.$payloadPath, 'error');
 
+                return self::FAILURE;
+            }
+
+            $data = json_decode((string)file_get_contents($payloadPath), true);
+            if (! is_array($data) || ! isset($data['c'], $data['h'])) {
+                $this->message('Invalid payload structure.', 'error');
+
+                return self::FAILURE;
+            }
+
+            $serialized = base64_decode((string)$data['c'], true);
+            if ($serialized === false) {
+                $this->message('Failed to decode payload content.', 'error');
+
+                return self::FAILURE;
+            }
+
+            $secret = $this->getAppKey();
+            $expected = hash_hmac('sha256', $serialized, $secret);
+            if (! hash_equals($expected, (string)$data['h'])) {
+                $this->message('Payload HMAC verification failed.', 'error');
+
+                return self::FAILURE;
+            }
+
+            $closure = unserialize($serialized);
             if ($closure instanceof SerializableClosure) {
                 $closure = $closure->getClosure();
             }
 
-            if (is_callable($closure)) {
-                call_user_func($closure);
-                $this->message('Closure executed successfully.');
-
-                return self::SUCCESS;
-            } else {
-                $this->message('Provided argument is not a callable closure.', 'error');
+            if (! is_callable($closure)) {
+                $this->message('Payload did not contain a callable closure.', 'error');
 
                 return self::FAILURE;
             }
+
+            call_user_func($closure);
+            $this->message('Closure executed successfully.');
+
+            return self::SUCCESS;
         } catch (Throwable $e) {
             $this->message('Failed to execute closure: '.$e->getMessage(), 'error');
 
             return self::FAILURE;
+        } finally {
+            // Cleanup payload file
+            if (isset($payloadPath) && is_file($payloadPath)) {
+                @unlink($payloadPath);
+            }
+            // Cleanup PID file for this process
+            $pidFile = storage_path('flyron/pids/'.getmypid().'.pid');
+            if (is_file($pidFile)) {
+                @unlink($pidFile);
+            }
         }
+    }
+
+    /**
+     * Get the APP_KEY as binary secret for HMAC verification.
+     *
+     * @return string
+     */
+    protected function getAppKey(): string
+    {
+        $key = (string)config('app.key', '');
+        if (str_starts_with($key, 'base64:')) {
+            $decoded = base64_decode(substr($key, 7), true);
+            if ($decoded !== false) {
+                return $decoded;
+            }
+        }
+
+        return $key;
     }
 }

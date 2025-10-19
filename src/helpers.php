@@ -8,9 +8,9 @@ if (! function_exists('async')) {
     /**
      * Run an async task with Flyron easily.
      *
-     * @param callable $callback
-     * @param array $args
-     * @param int|null $timeout
+     * @param callable               $callback
+     * @param array                  $args
+     * @param int|null               $timeout
      * @param CancellationToken|null $token
      *
      * @return Promise

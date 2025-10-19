@@ -42,6 +42,7 @@ trait Cancelable
      * Cancel the task if the condition evaluates to true.
      *
      * @param callable(): bool $condition
+     *
      * @return void
      */
     public function cancelIf(callable $condition): void
@@ -57,13 +58,13 @@ trait Cancelable
      * Warning: This is a blocking loop. Should be used in async contexts only.
      *
      * @param callable(): bool $condition
-     * @param int $intervalMs Interval in milliseconds to recheck condition (default: 100ms)
+     * @param int              $intervalMs Interval in milliseconds to recheck condition (default: 100ms)
      *
      * @return void
      */
     public function cancelWhen(callable $condition, int $intervalMs = 100): void
     {
-        while (!$this->cancelled) {
+        while (! $this->cancelled) {
             if ($condition()) {
                 $this->cancel();
                 break;
@@ -80,7 +81,7 @@ trait Cancelable
      * after detecting a trigger condition (e.g., debounce-like behavior).
      *
      * @param callable(): bool $condition Condition that triggers cancellation.
-     * @param int $delayMs Delay in milliseconds before cancellation (default: 500).
+     * @param int              $delayMs   Delay in milliseconds before cancellation (default: 500).
      *
      * @return void
      */

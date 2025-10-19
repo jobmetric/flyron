@@ -32,9 +32,10 @@ class Async
      *
      * @template T
      * @param callable(mixed ...): T $callback The callback function to execute asynchronously.
-     * @param array $args Optional arguments to pass to the callback.
-     * @param int|null $timeout Optional timeout in milliseconds to cancel if it runs too long.
-     * @param CancellationToken|null $token Optional cancellation token for cooperative cancellation.
+     * @param array                  $args     Optional arguments to pass to the callback.
+     * @param int|null               $timeout  Optional timeout in milliseconds to cancel if it runs too long.
+     * @param CancellationToken|null $token    Optional cancellation token for cooperative cancellation.
+     *
      * @return Promise<T> A promise that resolves with the callback's return value.
      * @throws RuntimeException If the operation is cancelled before or after the callback execution.
      */
@@ -51,7 +52,7 @@ class Async
                 Fiber::suspend($result);
             } catch (Throwable $e) {
                 // Optional logging if logger exists and app is in debug mode (Laravel-style)
-                $appDebug = function_exists('env') ? (bool) env('APP_DEBUG') : false;
+                $appDebug = function_exists('env') ? (bool)env('APP_DEBUG') : false;
                 if (function_exists('logger') && $appDebug) {
                     logger()->error('Async error', ['exception' => $e]);
                 }
@@ -73,7 +74,7 @@ class Async
      * Check if the operation has been cancelled and throw an exception if so.
      *
      * @param CancellationToken|null $token
-     * @param string $when Position in lifecycle: 'before' or 'after'
+     * @param string                 $when Position in lifecycle: 'before' or 'after'
      *
      * @throws RuntimeException
      */
