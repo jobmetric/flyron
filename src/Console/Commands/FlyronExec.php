@@ -44,6 +44,15 @@ class FlyronExec extends Command
                 return self::FAILURE;
             }
 
+            // Restrict path under storage/flyron/payloads
+            $real = realpath($payloadPath) ?: $payloadPath;
+            $base = realpath(storage_path('flyron/payloads')) ?: storage_path('flyron/payloads');
+            if ($real === false || strncmp($real, $base, strlen($base)) !== 0) {
+                $this->message('Invalid payload path.', 'error');
+
+                return self::FAILURE;
+            }
+
             $data = json_decode((string)file_get_contents($payloadPath), true);
             if (! is_array($data) || ! isset($data['c'], $data['h'])) {
                 $this->message('Invalid payload structure.', 'error');
@@ -51,11 +60,30 @@ class FlyronExec extends Command
                 return self::FAILURE;
             }
 
-            $serialized = base64_decode((string)$data['c'], true);
-            if ($serialized === false) {
+            $procCfg = (array)config('flyron.process', []);
+            $encEnabled = (bool)($data['e'] ?? false);
+            $cipher = (string)($data['y'] ?? ($procCfg['encryption_cipher'] ?? 'aes-256-gcm'));
+
+            $raw = base64_decode((string)$data['c'], true);
+            if ($raw === false) {
                 $this->message('Failed to decode payload content.', 'error');
 
                 return self::FAILURE;
+            }
+
+            if ($encEnabled) {
+                $iv = base64_decode((string)($data['i'] ?? ''), true) ?: '';
+                $tag = base64_decode((string)($data['g'] ?? ''), true) ?: '';
+                $secret = $this->getAppKey();
+                $dec = openssl_decrypt($raw, $cipher, $secret, OPENSSL_RAW_DATA, $iv, $tag);
+                if ($dec === false) {
+                    $this->message('Failed to decrypt payload.', 'error');
+
+                    return self::FAILURE;
+                }
+                $serialized = $dec;
+            } else {
+                $serialized = $raw;
             }
 
             $secret = $this->getAppKey();
@@ -66,7 +94,7 @@ class FlyronExec extends Command
                 return self::FAILURE;
             }
 
-            $closure = unserialize($serialized);
+            $closure = unserialize($serialized, ['allowed_classes' => [\Laravel\SerializableClosure\SerializableClosure::class]]);
             if ($closure instanceof SerializableClosure) {
                 $closure = $closure->getClosure();
             }
@@ -77,7 +105,19 @@ class FlyronExec extends Command
                 return self::FAILURE;
             }
 
+            ob_start();
             call_user_func($closure);
+            $buffer = ob_get_clean();
+            if (! empty($buffer)) {
+                $pidFile = storage_path('flyron/pids/'.getmypid().'.pid');
+                if (is_file($pidFile)) {
+                    $meta = json_decode((string)file_get_contents($pidFile), true);
+                    if (is_array($meta)) {
+                        $logPath = $meta['payload'].'.log';
+                        @file_put_contents($logPath, $buffer, FILE_APPEND);
+                    }
+                }
+            }
             $this->message('Closure executed successfully.');
 
             return self::SUCCESS;

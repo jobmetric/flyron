@@ -46,6 +46,8 @@ return [
 
     'schedule' => [
         'enabled' => env('FLYRON_SCHEDULE_ENABLED', true),
+        // Optional: limit scheduling to specific environments (e.g., ["production"]).
+        'environments' => env('FLYRON_SCHEDULE_ENVIRONMENTS') ? explode(',', env('FLYRON_SCHEDULE_ENVIRONMENTS')) : [],
 
         'process_clean' => [
             'enabled'   => env('FLYRON_SCHEDULE_PROCESS_CLEAN', true),
@@ -57,6 +59,27 @@ return [
             'enabled'   => env('FLYRON_SCHEDULE_PROCESS_OPTIMIZE', false),
             'frequency' => env('FLYRON_SCHEDULE_PROCESS_OPTIMIZE_FREQUENCY', 'weekly'),
         ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Process Settings (AsyncProcess)
+    |--------------------------------------------------------------------------
+    |
+    | Controls payload security and retention, and optional concurrency throttle
+    | for AsyncProcess.
+    */
+
+    'process' => [
+        'encryption_enabled' => env('FLYRON_PROCESS_ENCRYPTION', false),
+        'encryption_cipher' => env('FLYRON_PROCESS_CIPHER', 'aes-256-gcm'),
+        'payload_ttl_seconds' => env('FLYRON_PROCESS_PAYLOAD_TTL', 86400),
+
+        // Throttle settings for spawning processes
+        'max_concurrency' => env('FLYRON_PROCESS_MAX_CONCURRENCY', 0), // 0 means unlimited
+        'throttle_mode' => env('FLYRON_PROCESS_THROTTLE_MODE', 'reject'), // reject|wait
+        'throttle_wait_max_seconds' => env('FLYRON_PROCESS_THROTTLE_WAIT_MAX', 30),
+        'throttle_wait_interval_ms' => env('FLYRON_PROCESS_THROTTLE_WAIT_INTERVAL', 200),
     ],
 
 ];

@@ -78,6 +78,19 @@ class Await
 
         $errors = [];
 
+        // Eager start to simulate concurrency
+        foreach ($promises as $p) {
+            $p->eagerStart();
+        }
+
+        // If any already settled successfully, return its value
+        foreach ($promises as $promise) {
+            if (! $promise->isPending() && $promise->isFulfilled()) {
+                return $promise->getResult();
+            }
+        }
+
+        // Fallback: run sequentially
         foreach ($promises as $promise) {
             try {
                 return $promise->run();
@@ -90,7 +103,6 @@ class Await
             throw new RuntimeException("All promises were rejected.");
         }
 
-        // Should not reach here
         throw new RuntimeException("Unexpected state in Await::any");
     }
 

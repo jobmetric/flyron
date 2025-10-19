@@ -75,6 +75,11 @@ class Promise
     protected float $startTime;
 
     /**
+     * Indicates whether the underlying Fiber has been started.
+     */
+    protected bool $started = false;
+
+    /**
      * Promise constructor.
      *
      * @param Fiber $fiber Fiber wrapping the async operation.
@@ -120,6 +125,7 @@ class Promise
         }
 
         try {
+            $this->started = true;
             $value = $this->fiber->start();
         } catch (Throwable $e) {
             $this->exception = $e;
@@ -158,6 +164,42 @@ class Promise
         $this->invokeFinally();
 
         return $this->getResultOrThrow();
+    }
+
+    /**
+     * Start the underlying Fiber eagerly if still pending.
+     * Safe to call multiple times.
+     *
+     * @return void
+     */
+    public function eagerStart(): void
+    {
+        if ($this->state !== PromiseState::PENDING || $this->started) {
+            return;
+        }
+
+        try {
+            $this->started = true;
+            $value = $this->fiber->start();
+
+            if ($value instanceof Throwable) {
+                $this->exception = $value;
+                $this->state = PromiseState::REJECTED;
+                $this->invokeCatch($value);
+                $this->invokeFinally();
+
+                return;
+            }
+
+            $this->result = $value;
+            $this->state = PromiseState::FULFILLED;
+            $this->invokeFinally();
+        } catch (Throwable $e) {
+            $this->exception = $e;
+            $this->state = PromiseState::REJECTED;
+            $this->invokeCatch($e);
+            $this->invokeFinally();
+        }
     }
 
     /**
@@ -516,12 +558,14 @@ class Promise
     {
         self::validatePromises($promises);
 
+        // Best-effort: eager-start all to simulate competition
+        foreach ($promises as $p) {
+            $p->eagerStart();
+        }
+
         foreach ($promises as $promise) {
-            try {
-                return $promise->run();
-            } catch (Throwable $e) {
-                // First settled being a rejection: propagate immediately
-                throw $e;
+            if (! $promise->isPending()) {
+                return $promise->getResultOrThrow();
             }
         }
 
@@ -552,6 +596,30 @@ class Promise
     public static function reject(Throwable $e): self
     {
         return self::makeRejected($e);
+    }
+
+    /**
+     * Create a Promise from a callable executed within a Fiber.
+     *
+     * The callable's return value fulfills the Promise. If the callable throws,
+     * the Promise is rejected with the exception.
+     *
+     * @template TFrom
+     * @param callable(mixed ...): TFrom $callable
+     * @param array                      $args
+     *
+     * @return self<TFrom>
+     */
+    public static function from(callable $callable, array $args = []): self
+    {
+        return new self(new Fiber(function () use ($callable, $args) {
+            try {
+                $val = $callable(...$args);
+                Fiber::suspend($val);
+            } catch (Throwable $e) {
+                Fiber::suspend($e);
+            }
+        }));
     }
 
     /**
@@ -596,6 +664,68 @@ class Promise
         }
 
         return $results;
+    }
+
+    /**
+     * Return a new Promise that enforces a best-effort timeout without mutating the original.
+     *
+     * Note: Due to cooperative model, long-running synchronous work cannot be preempted.
+     *
+     * @param self $promise
+     * @param int  $ms
+     *
+     * @return self
+     */
+    public static function withTimeout(self $promise, int $ms): self
+    {
+        $start = microtime(true);
+
+        return new self(new Fiber(function () use ($promise, $ms, $start) {
+            try {
+                $val = $promise->run();
+                if ((microtime(true) - $start) * 1000 > $ms) {
+                    throw new RuntimeException("Promise timed out after {$ms}ms");
+                }
+                Fiber::suspend($val);
+            } catch (Throwable $e) {
+                Fiber::suspend($e);
+            }
+        }));
+    }
+
+    /**
+     * Internal: settle this promise as fulfilled. For Deferred usage.
+     *
+     * @param mixed $value
+     *
+     * @return void
+     */
+    public function resolveInternal(mixed $value): void
+    {
+        if ($this->state !== PromiseState::PENDING) {
+            return;
+        }
+        $this->result = $value;
+        $this->state = PromiseState::FULFILLED;
+        $this->invokeFinally();
+    }
+
+    /**
+     * Internal: settle this promise as rejected. For Deferred usage.
+     *
+     * @param Throwable $e
+     *
+     * @return void
+     */
+    public function rejectInternal(Throwable $e): void
+    {
+        if ($this->state !== PromiseState::PENDING) {
+            return;
+        }
+        $this->exception = $e;
+        $this->state = PromiseState::REJECTED;
+        $this->invokeCatch($e);
+        $this->invokeFinally();
     }
 
     /**

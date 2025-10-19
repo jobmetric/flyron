@@ -50,6 +50,11 @@ class FlyronServiceProvider extends PackageCoreServiceProvider
                 return;
             }
 
+            $envs = (array)($cfg['environments'] ?? []);
+            if ($envs && ! in_array($this->app->environment(), $envs, true)) {
+                return;
+            }
+
             // Schedule process-clean
             $clean = (array)($cfg['process_clean'] ?? []);
             if ($clean['enabled'] ?? false) {

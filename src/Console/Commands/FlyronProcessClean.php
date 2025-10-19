@@ -58,8 +58,9 @@ class FlyronProcessClean extends Command
 
         if ($this->option('payloads') && is_dir($payloadDir)) {
             $removedPayloads = 0;
-            // Remove payloads older than 1 day with no corresponding running process
-            $threshold = time() - 86400;
+            // Remove payloads older than configured TTL (default 1 day)
+            $ttl = (int)config('flyron.process.payload_ttl_seconds', 86400);
+            $threshold = time() - max(1, $ttl);
             foreach (glob($payloadDir.'/*.json') as $pfile) {
                 $mtime = filemtime($pfile) ?: 0;
                 if ($mtime < $threshold) {
@@ -108,4 +109,3 @@ class FlyronProcessClean extends Command
         return isset($output[1]);
     }
 }
-

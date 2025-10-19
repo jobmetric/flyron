@@ -63,9 +63,15 @@ class FlyronProcessList extends Command
         foreach ($files as $file) {
             $pid = basename($file, '.pid');
             $status = $this->isRunning((int)$pid) ? '✅ Alive' : '❌ Dead';
-            $label = $this->readLabel($file);
-            $labelOut = $label ? " | Label: {$label}" : '';
-            $this->line("🧩 PID: {$pid} | Status: {$status}{$labelOut}");
+            [$label, $createdAt, $payload] = $this->readMeta($file);
+            $parts = ["🧩 PID: {$pid}", "Status: {$status}"];
+            if ($label)
+                $parts[] = "Label: {$label}";
+            if ($createdAt)
+                $parts[] = "Created: {$createdAt}";
+            if ($payload)
+                $parts[] = "Payload: {$payload}";
+            $this->line(implode(' | ', $parts));
         }
 
         $this->line(str_repeat('-', 40));
@@ -113,23 +119,26 @@ class FlyronProcessList extends Command
     }
 
     /**
-     * Read optional label from PID metadata (JSON content).
+     * Read metadata from PID JSON file (label, created_at, payload path).
      *
      * @param string $file
      *
-     * @return string|null
+     * @return array{0:?string,1:?string,2:?string}
      */
-    protected function readLabel(string $file): ?string
+    protected function readMeta(string $file): array
     {
         $content = @file_get_contents($file);
         if ($content === false) {
-            return null;
+            return [null, null, null];
         }
         $data = json_decode($content, true);
-        if (is_array($data) && isset($data['label']) && $data['label'] !== null && $data['label'] !== '') {
-            return (string)$data['label'];
+        if (! is_array($data)) {
+            return [null, null, null];
         }
+        $label = isset($data['label']) && $data['label'] !== '' ? (string)$data['label'] : null;
+        $createdAt = isset($data['created_at']) && $data['created_at'] !== '' ? (string)$data['created_at'] : null;
+        $payload = isset($data['payload']) && $data['payload'] !== '' ? (string)$data['payload'] : null;
 
-        return null;
+        return [$label, $createdAt, $payload];
     }
 }

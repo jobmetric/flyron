@@ -63,11 +63,20 @@ class FlyronProcessKill extends Command
         // Determine platform
         $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
 
-        // Kill process based on platform
+        // Graceful kill: try TERM first, then KILL
         if ($isWindows) {
-            exec("taskkill /F /PID {$pid}", $output, $exitCode);
+            exec("taskkill /PID {$pid} /T", $output, $exitCode);
+            if ($exitCode !== 0) {
+                // Force kill as fallback
+                exec("taskkill /F /PID {$pid} /T", $output, $exitCode);
+            }
         } else {
-            exec("kill -9 {$pid}", $output, $exitCode);
+            // Send SIGTERM, wait a bit, then SIGKILL if needed
+            exec("kill -15 {$pid}", $output, $exitCode);
+            if ($exitCode !== 0 || $this->isRunning($pid)) {
+                usleep(300000);
+                exec("kill -9 {$pid}", $output, $exitCode);
+            }
         }
 
         // Clean up .pid file if successful
