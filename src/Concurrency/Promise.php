@@ -54,9 +54,15 @@ class Promise
     protected ?Closure $finally = null;
 
     /**
-     * @var Closure[] Queue of callbacks for then chaining.
+     * Track whether catch and finally have been invoked to avoid double-calls.
+     *
+     * This prevents executing user-provided handlers multiple times when
+     * methods such as catch()/finally() are attached after settlement or
+     * when run() is called repeatedly.
      */
-    protected array $thenQueue = [];
+    protected bool $catchInvoked = false;
+
+    protected bool $finallyInvoked = false;
 
     /**
      * @var int|null Timeout in milliseconds.
@@ -82,12 +88,20 @@ class Promise
     /**
      * Run the promise and return its result.
      *
-     * If the promise is already settled (fulfilled, rejected, or cancelled),
-     * it returns the result or throws the exception.
+     * Behavior:
+     * - If already settled (fulfilled/rejected/cancelled), immediately returns value or throws error.
+     * - If the wrapped Fiber throws, the promise is rejected and the exception is thrown.
+     * - If the Fiber returns a Throwable (e.g. Async suspended with an error), it is treated as rejection.
+     * - Invokes catch()/finally() handlers exactly once where applicable.
      *
-     * If a timeout is set and exceeded, cancels the promise.
+     * Timeout:
+     * A pre-start and post-execution best-effort timeout check is performed.
+     * Due to the cooperative nature of Fibers here, long-running synchronous
+     * work cannot be preempted.
      *
-     * Runs all chained then callbacks in order.
+     * Chaining:
+     * Any further transformation should be done with then()/map()/recover(),
+     * which return new Promise instances.
      *
      * @return mixed The fulfilled value.
      * @throws Throwable If the promise is rejected or cancelled.
@@ -111,101 +125,176 @@ class Promise
             $this->exception = $e;
             $this->state = PromiseState::REJECTED;
 
-            if ($this->catch) {
-                ($this->catch)($e);
-            }
-
-            if ($this->finally) {
-                ($this->finally)();
-            }
+            $this->invokeCatch($e);
+            $this->invokeFinally();
 
             return $this->getResultOrThrow();
         }
 
-        foreach ($this->thenQueue as $then) {
-            $value = $then($value);
+        // If the fiber returned a Throwable via Async suspension, treat as rejection
+        if ($value instanceof Throwable) {
+            $this->exception = $value;
+            $this->state = PromiseState::REJECTED;
 
-            // Unwrap nested promise if returned
-            if ($value instanceof self) {
-                $value = $value->run();
-            }
+            $this->invokeCatch($value);
+            $this->invokeFinally();
+
+            return $this->getResultOrThrow();
         }
 
         $this->result = $value;
         $this->state = PromiseState::FULFILLED;
 
-        if ($this->finally) {
-            try {
-                ($this->finally)();
-            } catch (Throwable $e) {
-                // Exceptions in finally are swallowed
-            }
+        // Post-execution timeout check (best-effort; cannot preempt running fiber)
+        if ($this->timeoutMs !== null && (microtime(true) - $this->startTime) * 1000 > $this->timeoutMs) {
+            $this->state = PromiseState::CANCELLED;
+            $this->exception = new RuntimeException("Promise timed out after {$this->timeoutMs}ms");
+
+            $this->invokeFinally();
+
+            return $this->getResultOrThrow();
         }
+
+        $this->invokeFinally();
 
         return $this->getResultOrThrow();
     }
 
     /**
-     * Attach a callback to be executed when the promise is fulfilled.
+     * Attach a callback to transform the fulfilled value.
      *
-     * The callback receives the resolved value and can return a new value or promise.
+     * The callback receives the resolved value and may return either a plain
+     * value or another Promise. If a Promise is returned, it will be unwrapped.
+     * When the current promise is already settled:
+     * - fulfilled: the callback is executed immediately (fast-path)
+     * - rejected/cancelled: the rejection is propagated as-is
      *
-     * @param Closure(T): mixed $callback
+     * @template TResult
+     * @param Closure(T): (TResult|self<TResult>) $callback
      *
-     * @return static Returns self for chaining.
+     * @return self<TResult>
      */
     public function then(Closure $callback): self
     {
-        $this->thenQueue[] = $callback;
+        // Fast path if already settled
+        if ($this->state === PromiseState::FULFILLED) {
+            try {
+                $mapped = $callback($this->result);
+                if ($mapped instanceof self) {
+                    // Unwrap immediately if possible
+                    try {
+                        $val = $mapped->run();
 
-        return $this;
+                        return self::makeFulfilled($val);
+                    } catch (Throwable $e) {
+                        return self::makeRejected($e);
+                    }
+                }
+
+                return self::makeFulfilled($mapped);
+            } catch (Throwable $e) {
+                return self::makeRejected($e);
+            }
+        }
+
+        if ($this->state === PromiseState::REJECTED || $this->state === PromiseState::CANCELLED) {
+            // Propagate rejection/cancellation unchanged
+            return self::makeRejected($this->exception ?? new RuntimeException('Promise was cancelled.'));
+        }
+
+        // Lazy path: wrap in a new Promise
+        $parent = $this;
+
+        return new self(new Fiber(function () use ($parent, $callback) {
+            try {
+                $value = $parent->run();
+                $mapped = $callback($value);
+
+                if ($mapped instanceof self) {
+                    $mapped = $mapped->run();
+                }
+
+                Fiber::suspend($mapped);
+            } catch (Throwable $e) {
+                Fiber::suspend($e);
+            }
+        }));
     }
 
     /**
-     * Attach a callback to be executed when the promise is rejected.
+     * Attach a rejection handler to observe or handle errors.
      *
-     * The callback receives the Throwable and can handle the error.
+     * If the promise is already rejected when you attach the handler, it will
+     * be invoked immediately (once). Exceptions from the handler are swallowed.
      *
      * @param Closure(Throwable): void $callback
      *
-     * @return static Returns self for chaining.
+     * @return self<T> Returns the same promise for fluent chaining.
      */
     public function catch(Closure $callback): self
     {
         $this->catch = $callback;
 
+        if ($this->state === PromiseState::REJECTED && ! $this->catchInvoked && $this->exception) {
+            $this->invokeCatch($this->exception);
+        }
+
         return $this;
     }
 
     /**
-     * Attach a callback to be executed when the promise is settled
-     * (fulfilled or rejected).
+     * Attach a finalizer to run once when the promise settles (success or error).
      *
-     * The callback receives no arguments.
+     * If the promise is already settled when you attach the finalizer, it will
+     * be invoked immediately (once). Exceptions from the handler are swallowed.
      *
      * @param Closure(): void $callback
      *
-     * @return static Returns self for chaining.
+     * @return self<T> Returns the same promise for fluent chaining.
      */
     public function finally(Closure $callback): self
     {
         $this->finally = $callback;
 
+        if ($this->state !== PromiseState::PENDING && ! $this->finallyInvoked) {
+            $this->invokeFinally();
+        }
+
         return $this;
     }
 
     /**
-     * Set a timeout in milliseconds for this promise.
+     * Set a best-effort timeout in milliseconds.
      *
-     * If the promise does not settle before timeout, it will be cancelled.
+     * If the promise does not settle before timeout, it will be marked
+     * as cancelled and a timeout exception is thrown on run().
      *
      * @param int $ms Timeout duration in milliseconds.
      *
-     * @return static Returns self for chaining.
+     * @return self<T>
      */
     public function timeout(int $ms): self
     {
         $this->timeoutMs = $ms;
+
+        return $this;
+    }
+
+    /**
+     * Cancel the promise if it is still pending (cooperative).
+     *
+     * This does not forcibly stop the running Fiber. It only updates the state
+     * to CANCELLED and ensures finally() is invoked. Subsequent run() calls will throw.
+     *
+     * @return self<T>
+     */
+    public function cancel(): self
+    {
+        if ($this->state === PromiseState::PENDING) {
+            $this->state = PromiseState::CANCELLED;
+            $this->exception = new RuntimeException('Promise was cancelled.');
+            $this->invokeFinally();
+        }
 
         return $this;
     }
@@ -227,6 +316,28 @@ class Promise
         }
 
         return $this->result;
+    }
+
+    /**
+     * Get the resolved value (if any) without throwing.
+     *
+     * Useful for diagnostics/telemetry after settlement.
+     *
+     * @return T|null
+     */
+    public function getResult(): mixed
+    {
+        return $this->result;
+    }
+
+    /**
+     * Get the exception (if rejected or cancelled) without throwing.
+     *
+     * @return Throwable|null
+     */
+    public function getException(): ?Throwable
+    {
+        return $this->exception;
     }
 
     /**
@@ -280,6 +391,95 @@ class Promise
     }
 
     /**
+     * Map the fulfilled value to another value using a callback.
+     *
+     * Shorthand for then() where the callback is pure (no side-effects).
+     *
+     * @template TResult
+     * @param Closure(T): TResult $callback
+     *
+     * @return self<TResult>
+     */
+    public function map(Closure $callback): self
+    {
+        return $this->then($callback);
+    }
+
+    /**
+     * Run a side-effect on the fulfilled value and pass it through unchanged.
+     *
+     * @param Closure(T): void $callback
+     *
+     * @return self<T>
+     */
+    public function tap(Closure $callback): self
+    {
+        return $this->then(function ($value) use ($callback) {
+            $callback($value);
+
+            return $value;
+        });
+    }
+
+    /**
+     * Recover from a rejection by returning a fallback value or Promise.
+     *
+     * If fulfilled, the value passes through. If rejected/cancelled, the
+     * recovery callback is executed. If it returns a Promise, it is unwrapped.
+     *
+     * @template TRecovered
+     * @param Closure(Throwable): (TRecovered|self<TRecovered>) $callback
+     *
+     * @return self<T|TRecovered>
+     */
+    public function recover(Closure $callback): self
+    {
+        // Fast path if already settled
+        if ($this->state === PromiseState::FULFILLED) {
+            return self::makeFulfilled($this->result);
+        }
+
+        if ($this->state === PromiseState::REJECTED || $this->state === PromiseState::CANCELLED) {
+            try {
+                $recovered = $callback($this->exception ?? new RuntimeException('Promise was cancelled.'));
+                if ($recovered instanceof self) {
+                    try {
+                        $val = $recovered->run();
+
+                        return self::makeFulfilled($val);
+                    } catch (Throwable $e) {
+                        return self::makeRejected($e);
+                    }
+                }
+
+                return self::makeFulfilled($recovered);
+            } catch (Throwable $e) {
+                return self::makeRejected($e);
+            }
+        }
+
+        // Lazy path
+        $parent = $this;
+
+        return new self(new Fiber(function () use ($parent, $callback) {
+            try {
+                $value = $parent->run();
+                Fiber::suspend($value);
+            } catch (Throwable $e) {
+                try {
+                    $recovered = $callback($e);
+                    if ($recovered instanceof self) {
+                        $recovered = $recovered->run();
+                    }
+                    Fiber::suspend($recovered);
+                } catch (Throwable $re) {
+                    Fiber::suspend($re);
+                }
+            }
+        }));
+    }
+
+    /**
      * Wait for all promises to resolve and return their results.
      *
      * @template TKey
@@ -300,43 +500,50 @@ class Promise
     }
 
     /**
-     * Wait for the first promise to resolve (fulfill or reject) and return its result.
+     * Resolve to the first settled promise (deterministic sequential evaluation).
      *
-     * @template T
-     * @param self<T>[] $promises
+     * Promises are evaluated in the order provided; the first one that settles
+     * determines the outcome. In this cooperative model there is no true
+     * concurrency between entries unless the underlying tasks yield.
      *
-     * @return mixed
-     * @throws Throwable If the resolved promise rejects or errors.
+     * @template TAny
+     * @param self<TAny>[] $promises
+     *
+     * @return TAny
+     * @throws Throwable If the first settled promise rejects.
      */
     public static function race(array $promises): mixed
     {
         self::validatePromises($promises);
 
-        while (true) {
-            foreach ($promises as $promise) {
-                if (! $promise->isPending()) {
-                    return $promise->getResultOrThrow();
-                }
+        foreach ($promises as $promise) {
+            try {
+                return $promise->run();
+            } catch (Throwable $e) {
+                // First settled being a rejection: propagate immediately
+                throw $e;
             }
-            usleep(1000);
         }
+
+        // Should not reach here with a non-empty array
+        throw new InvalidArgumentException('No promises provided to race.');
     }
 
     /**
-     * Create a resolved promise with a given value.
+     * Create a resolved (already-fulfilled) promise for a given value.
      *
-     * @template T
-     * @param T $value
+     * @template TValue
+     * @param TValue $value
      *
-     * @return self<T>
+     * @return self<TValue>
      */
     public static function resolve(mixed $value): self
     {
-        return new self(new Fiber(fn () => $value));
+        return self::makeFulfilled($value);
     }
 
     /**
-     * Create a rejected promise with a given exception.
+     * Create a rejected (already-rejected) promise for a given exception.
      *
      * @param Throwable $e
      *
@@ -344,7 +551,7 @@ class Promise
      */
     public static function reject(Throwable $e): self
     {
-        return new self(new Fiber(fn () => throw $e));
+        return self::makeRejected($e);
     }
 
     /**
@@ -360,6 +567,102 @@ class Promise
         foreach ($promises as $promise) {
             if (! $promise instanceof Promise) {
                 throw new InvalidArgumentException("All elements must be Promise instances");
+            }
+        }
+    }
+
+    /**
+     * Wait for all promises to settle and return their outcomes.
+     *
+     * Returns an array preserving keys with entries in the form:
+     *  - ['status' => 'fulfilled', 'value' => mixed]
+     *  - ['status' => 'rejected',  'reason' => Throwable]
+     *
+     * @param self[] $promises
+     *
+     * @return array<string|int, array{status: string, value?: mixed, reason?: Throwable}>
+     */
+    public static function allSettled(array $promises): array
+    {
+        self::validatePromises($promises);
+
+        $results = [];
+        foreach ($promises as $key => $promise) {
+            try {
+                $results[$key] = ['status' => PromiseState::FULFILLED->value, 'value' => $promise->run(),];
+            } catch (Throwable $e) {
+                $results[$key] = ['status' => PromiseState::REJECTED->value, 'reason' => $e,];
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Internal helper to build an already-fulfilled Promise without Fiber overhead.
+     *
+     * @param mixed $value
+     *
+     * @return self
+     */
+    protected static function makeFulfilled(mixed $value): self
+    {
+        // Create with a no-op fiber; run() returns immediately due to settled state
+        $promise = new self(new Fiber(fn () => null));
+        $promise->result = $value;
+        $promise->state = PromiseState::FULFILLED;
+
+        return $promise;
+    }
+
+    /**
+     * Internal helper to build an already-rejected Promise without Fiber overhead.
+     *
+     * @param Throwable $e
+     *
+     * @return self
+     */
+    protected static function makeRejected(Throwable $e): self
+    {
+        $promise = new self(new Fiber(fn () => null));
+        $promise->exception = $e;
+        $promise->state = PromiseState::REJECTED;
+
+        return $promise;
+    }
+
+    /**
+     * Invoke the catch handler once if present.
+     *
+     * @param Throwable $e
+     *
+     * @return void
+     */
+    protected function invokeCatch(Throwable $e): void
+    {
+        if ($this->catch && ! $this->catchInvoked) {
+            $this->catchInvoked = true;
+            try {
+                ($this->catch)($e);
+            } catch (Throwable) {
+                // Swallow exceptions from catch handlers
+            }
+        }
+    }
+
+    /**
+     * Invoke the finally handler once if present.
+     *
+     * @return void
+     */
+    protected function invokeFinally(): void
+    {
+        if ($this->finally && ! $this->finallyInvoked) {
+            $this->finallyInvoked = true;
+            try {
+                ($this->finally)();
+            } catch (Throwable) {
+                // Swallow exceptions from finally handlers
             }
         }
     }

@@ -18,13 +18,13 @@ use Throwable;
 class Await
 {
     /**
-     * Wait for a single promise to resolve and return the result.
+     * Wait for a single promise to settle and return its value.
      *
      * @template T
      * @param Promise<T> $promise The promise to wait on.
      *
-     * @return mixed The resolved value of the promise.
-     * @throws Throwable Throws if the promise rejects or errors.
+     * @return T The resolved value of the promise.
+     * @throws Throwable If the promise rejects or errors.
      */
     public static function one(Promise $promise): mixed
     {
@@ -37,8 +37,8 @@ class Await
      * @template T
      * @param Promise<T>[] $promises Array of Promise instances to wait on.
      *
-     * @return T[] Array of resolved values indexed by input keys.
-     * @throws Throwable Throws if any of the promises rejects or errors.
+     * @return array<string|int, T> Resolved values indexed by input keys.
+     * @throws Throwable If any of the promises rejects or errors.
      * @throws InvalidArgumentException If any element is not a Promise instance.
      */
     public static function all(array $promises): array
@@ -47,13 +47,13 @@ class Await
     }
 
     /**
-     * Wait until the first promise resolves (fulfills or rejects) and return its result.
+     * Resolve to the first settled promise (deterministic, sequential evaluation).
      *
      * @template T
      * @param Promise<T>[] $promises Array of Promise instances to race.
      *
-     * @return mixed The resolved value of the first settled promise.
-     * @throws Throwable Throws if the first settled promise rejects or errors.
+     * @return T The resolved value of the first settled promise.
+     * @throws Throwable If the first settled promise rejects or errors.
      */
     public static function race(array $promises): mixed
     {
@@ -61,15 +61,15 @@ class Await
     }
 
     /**
-     * Wait until any one of the promises resolves successfully (first fulfilled).
+     * Return the first fulfilled value among the given promises (sequential evaluation).
      *
      * If all promises reject, throws a RuntimeException.
      *
      * @template T
      * @param Promise<T>[] $promises Array of Promise instances.
      *
-     * @return mixed The resolved value of the first fulfilled promise.
-     * @throws Throwable Throws if all promises reject.
+     * @return T The resolved value of the first fulfilled promise.
+     * @throws Throwable If all promises reject.
      * @throws InvalidArgumentException If any element is not a Promise instance.
      */
     public static function any(array $promises): mixed
@@ -78,27 +78,38 @@ class Await
 
         $errors = [];
 
-        while (true) {
-            foreach ($promises as $promise) {
-                if (! $promise->isPending()) {
-                    try {
-                        return $promise->run();
-                    } catch (Throwable $e) {
-                        $errors[] = $e;
-                    }
-                }
+        foreach ($promises as $promise) {
+            try {
+                return $promise->run();
+            } catch (Throwable $e) {
+                $errors[] = $e;
             }
-
-            if (count($errors) === count($promises)) {
-                throw new RuntimeException("All promises were rejected.");
-            }
-
-            usleep(1000);
         }
+
+        if (count($errors) === count($promises)) {
+            throw new RuntimeException("All promises were rejected.");
+        }
+
+        // Should not reach here
+        throw new RuntimeException("Unexpected state in Await::any");
+    }
+
+    /**
+     * Wait for all promises to settle and return their outcomes.
+     *
+     * @param Promise[] $promises
+     *
+     * @return array<string|int, array{status: string, value?: mixed, reason?: Throwable}>
+     */
+    public static function allSettled(array $promises): array
+    {
+        return Promise::allSettled($promises);
     }
 
     /**
      * Delay execution for a specified number of milliseconds.
+     *
+     * Cooperative pause that yields control for approximately the given time.
      *
      * @param int $ms Delay duration in milliseconds.
      *
