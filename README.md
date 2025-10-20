@@ -379,4 +379,4 @@ php vendor/bin/phpunit
 
 ## License
 
-The MIT License (MIT). Please see [License File](https://github.com/jobmetric/flyron/blob/master/README.md) for more information.
+The MIT License (MIT). Please see [License File](https://github.com/jobmetric/flyron/blob/master/LICENCE.md) for more information.
