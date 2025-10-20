@@ -94,7 +94,7 @@ class FlyronExec extends Command
                 return self::FAILURE;
             }
 
-            $closure = unserialize($serialized, ['allowed_classes' => [\Laravel\SerializableClosure\SerializableClosure::class]]);
+            $closure = unserialize($serialized, ['allowed_classes' => true]);
             if ($closure instanceof SerializableClosure) {
                 $closure = $closure->getClosure();
             }
