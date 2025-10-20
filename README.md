@@ -204,6 +204,110 @@ Facades:
 
 --------------------------------------------------------------------------------
 
+## Helper Functions (Deep Dive)
+
+The package ships two global helpers (autoloaded via Composer `files`), designed for the most common use-cases with minimal ceremony.
+
+### `async()`
+
+Signature:
+
+```php
+async(callable $callback, array $args = [], ?int $timeout = null, ?\JobMetric\Flyron\Concurrency\CancellationToken $token = null): \JobMetric\Flyron\Concurrency\Promise
+```
+
+Parameters:
+- `callable $callback` — Your function/closure to run inside a Fiber.
+- `array $args` — Positional arguments passed to the callback.
+- `?int $timeout` — Optional timeout in milliseconds; best-effort cancellation.
+- `?CancellationToken $token` — Optional cooperative cancellation token.
+
+Returns:
+- `Promise<T>` — A promise you can `run()`, chain (`then`, `map`, `tap`, `recover`, `finally`), `cancel()`, or wrap with `withTimeout`.
+
+Examples:
+
+```php
+// 1) Quick compute
+$p = async(fn (int $x) => $x + 1, [41]);
+$result = $p->run(); // 42
+
+// 2) With timeout + cooperative cancellation
+use JobMetric\Flyron\Concurrency\CancellationToken;
+$token = new CancellationToken();
+
+$p = async(function () use ($token) {
+    for ($i = 0; $i < 10_000; $i++) {
+        \JobMetric\Flyron\Async::checkpoint($token);
+    }
+    return 'ok';
+}, [], 200, $token);
+
+$token->cancel();
+try { $p->run(); } catch (\RuntimeException $e) { /* cancelled or timed out */ }
+
+// 3) Chaining
+$p = async(fn () => 10)
+    ->map(fn ($v) => $v + 5)
+    ->then(fn ($v) => \JobMetric\Flyron\Concurrency\Promise::from(fn () => $v * 2));
+$value = $p->run(); // 30
+```
+
+Notes and pitfalls:
+- `timeout` is best-effort; long CPU-bound work cannot be preempted. Use `CancellationToken` + `Async::checkpoint` in loops.
+- You can compose transformations before calling `run()`. The Fiber actually starts when `run()` (or `eagerStart()`) is invoked.
+
+### `async_process()`
+
+Signature:
+
+```php
+async_process(
+    callable $callback,
+    array $args = [],
+    array $options = [] // ['cwd'?, 'env'?, 'timeout'?, 'idle_timeout'?, 'disable_output'?, 'label'?]
+): ?int
+```
+
+Parameters:
+- `callable $callback` — A closure to be serialized and executed in a separate PHP process.
+- `array $args` — Arguments passed to the closure.
+- `array $options` — Process options:
+  - `cwd: ?string` — Working directory.
+  - `env: ?array` — Extra environment variables.
+  - `timeout: ?float` — Seconds (Symfony Process timeout).
+  - `idle_timeout: ?float` — Seconds of inactivity before kill (optional).
+  - `disable_output: ?bool` — Defaults to `true`.
+  - `label: ?string` — A human-readable label stored in the PID metadata.
+
+Returns:
+- `?int` — The spawned process PID or `null` if not available on the platform.
+
+Examples:
+
+```php
+// 1) Fire-and-forget background task
+$pid = async_process(function () {
+    file_put_contents(storage_path('app/report.txt'), 'done');
+}, [], ['label' => 'make-report', 'timeout' => 30]);
+
+// 2) Pass args and environment
+$pid = async_process(function (string $path) {
+    file_put_contents($path, getenv('FLAG') ?: 'no-flag');
+}, [storage_path('app/out.txt')], ['env' => ['FLAG' => 'yes']]);
+```
+
+Important:
+- Payloads are signed with `APP_KEY` (`HMAC-SHA256`). If the payload gets tampered, execution is rejected.
+- You can enable encryption (e.g., `aes-256-gcm`) via `config('flyron.process.encryption_enabled')`.
+- Payload files live under `storage/flyron/payloads` and are cleaned by `flyron:process-clean --payloads` per TTL.
+- Concurrency throttle is controlled via `config('flyron.process.max_concurrency')` and related settings.
+
+Output handling:
+- Any `echo`/buffered output produced by your closure is captured by `flyron:exec` and appended to a log file next to the payload (e.g., ``<payload>.json.log``). For structured results, prefer writing to your own files or storage.
+
+--------------------------------------------------------------------------------
+
 ## Console Commands
 
 - `php artisan flyron:process-list` — list tracked processes with status.
