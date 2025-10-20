@@ -377,6 +377,10 @@ php vendor/bin/phpunit
 
 --------------------------------------------------------------------------------
 
+## Contributing
+
+Thank you for considering contributing to Flyron! See the [CONTRIBUTING.md](https://github.com/jobmetric/flyron/blob/master/CONTRIBUTING.md) for details.
+
 ## License
 
 The MIT License (MIT). Please see [License File](https://github.com/jobmetric/flyron/blob/master/LICENCE.md) for more information.
