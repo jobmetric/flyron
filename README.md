@@ -38,12 +38,6 @@ php artisan vendor:publish --provider="JobMetric\Flyron\FlyronServiceProvider" -
 
 You should now have a `config/flyron.php` file that allows you to configure the basics of this package.
 
-## Documentation
-
-coming soon...
-
---------------------------------------------------------------------------------
-
 ## Why Flyron? (Philosophy)
 
 - Build `async` flows without losing code readability. Fibers + Promises keep your code straightforward while managing waiting (I/O, network, timers).
